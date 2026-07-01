@@ -1,0 +1,5 @@
+Before committing any changes, always run `ruff format .` and `ruff check --fix .` on the changed files, and run `pytest` (install with `pip install -e . -r requirements-dev.txt` first) — stage the results.
+
+This is a shared library (`fchelper`), installed as a git dependency by fundersclub-operations, fundersclub-payments, and FundersClub (main). It has no consuming app of its own, so behavior here can only be verified by its test suite plus each consumer's CI — there is no "run the app and see" check. Prefer erring toward more test coverage for anything touching config/secret loading (`fchelper/configurator.py`), since a bug here fails silently in three production apps' settings.py rather than raising where it's easy to notice.
+
+When cutting a new version: bump `version` in `setup.py`, commit, `git tag <version>`, `git push && git push --tags`. Consumers pin an exact tag in their `requirements.txt` (`git+https://github.com/FundersClub/fundersclub-helpers.git@<version>#egg=fchelper`) and must bump that pin + regenerate their lockfile (`./scripts/deps.sh lock`) to pick up a new version.

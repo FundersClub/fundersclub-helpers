@@ -1,75 +1,104 @@
 import os
+import re
 
 import boto3
 
-
+# Populated by load(); setting()/required_setting() read from this.
 configurations = {}
+
+# Patterns that might leak into a botocore error message (e.g. from a
+# misconfigured IAM policy ARN) and shouldn't be printed or re-raised as-is.
+_AWS_ACCESS_KEY_RE = re.compile(r"AKIA[0-9A-Z]{16}")
+_HEX_SECRET_RE = re.compile(r"[0-9a-fA-F]{32,}")
+
+
+def _sanitize(message: str) -> str:
+    message = _AWS_ACCESS_KEY_RE.sub("[REDACTED]", message)
+    message = _HEX_SECRET_RE.sub("[REDACTED]", message)
+    return message
 
 
 def load(environment: str, prefix: str):
     """
-    Fetch secrets from AWS parameter store
+    Fetch settings from AWS Parameter Store under /{prefix}{environment}/ and
+    populate the module-level `configurations` dict that setting() reads from.
+    Returns that dict. Raises (with any credential-shaped substrings scrubbed
+    from the message) on failure -- callers decide whether to swallow this for
+    non-deployed environments.
     """
+    configurations.clear()
 
     if environment in ("developer", "test"):
-        # Developer just uses defaults stored in the repo
-        return {}
+        # Developer/test just use the defaults baked into the calling app.
+        return configurations
 
-    # Specify the parameter prefix
     parameter_prefix = f"/{prefix}{environment}/"
     client = boto3.client("ssm", region_name="us-east-1")
 
     try:
-        # Parameters come in pages, so we need to iteratively get the next page with NextToken
-        # until all parameters are loaded
+        # Parameters come in pages; keep fetching until NextToken runs out.
         next_token = "__placeholder__"
         while next_token:
-            if next_token == "__placeholder__":
-                # Get the list of parameters
-                resp = client.get_parameters_by_path(Path=parameter_prefix)
-            else:
-                resp = client.get_parameters_by_path(Path=parameter_prefix, NextToken=next_token)
+            kwargs = {"Path": parameter_prefix, "WithDecryption": True}
+            if next_token != "__placeholder__":
+                kwargs["NextToken"] = next_token
+            resp = client.get_parameters_by_path(**kwargs)
 
-            # Parse the parameters
-            for param in resp.get("Parameters"):
-                name = param.get("Name").lstrip(parameter_prefix)
-                if param.get("Type") == "String":
+            for param in resp.get("Parameters", []):
+                name = param["Name"].removeprefix(parameter_prefix)
+                param_type = param.get("Type")
+                if param_type == "String" or param_type == "SecureString":
                     configurations[name] = param.get("Value")
-                elif param.get("Type") == "StringList":
-                    # Parse 'StringList' parameters into python lists
-                    configurations[name] = param.get("Value").split(",")
+                elif param_type == "StringList":
+                    configurations[name] = param.get("Value", "").split(",")
 
             next_token = resp.get("NextToken")
 
     except Exception as e:
-        print("Error fetching parameters from AWS")
-        raise e
+        if not os.getenv("QUIET"):
+            print(f"Error fetching parameters from AWS: {_sanitize(str(e))}")
+        raise RuntimeError("Error fetching parameters from AWS Parameter Store") from None
+
+    if not os.getenv("QUIET"):
+        print(f"AWS Secrets loaded: {len(configurations)} parameter(s)")
+
+    return configurations
 
 
 def setting(key: str, default_value=None, data_type: str = "str"):
     """
-    Return a setting from an environment variable, AWS Parameter Store, or the default value if it's not set
+    Return a setting from an environment variable, AWS Parameter Store (via the
+    most recent load() call), or the default value if it's not set anywhere.
     """
 
-    # Note that the logic here will keep looking for the setting not just based on whether the key was found,
-    # but also if the value itself is falsy. If the value is falsy, we'll keep falling back.
-
-    # First, check if the setting is in the environment
+    # Falls back based on falsy-ness, not just presence: an explicitly-empty
+    # env var still falls through to Parameter Store / the default.
     value = os.getenv(key, None)
-
-    # Next, check if the setting is in the AWS parameter store, but only if the value wasn't found in env vars
     value = value or configurations.get(key, None)
-
-    # Finally, return the default value if the setting wasn't found in either place
     value = value or default_value
 
-    # Convert to the specified data type
-    value = convert_value(value, data_type)
+    return convert_value(value, data_type)
 
+
+def required_setting(key: str, default_value=None, data_type: str = "str", *, is_deployed_env: bool):
+    """
+    Like setting(), but raises ImproperlyConfigured if the resolved value is
+    empty while is_deployed_env=True. Pass the calling app's own notion of
+    "this is a deployed environment" (e.g. ENVIRONMENT in ("production", "staging"))
+    -- this library has no opinion on what counts as deployed.
+    """
+    # Imported lazily so fchelper.configurator doesn't force a hard Django
+    # dependency on consumers that only use setting()/load().
+    from django.core.exceptions import ImproperlyConfigured
+
+    default = None if is_deployed_env else default_value
+    value = setting(key, default, data_type)
+    if is_deployed_env and value in (None, "", []):
+        raise ImproperlyConfigured(f"{key} must be configured for a deployed environment")
     return value
 
 
-def convert_value(value, data_type):
+def convert_value(value, data_type: str):
     if data_type == "str":
         return value or ""
 
@@ -77,16 +106,13 @@ def convert_value(value, data_type):
         return int(value)
 
     if data_type == "bool":
-        if value.lower() == "true":
-            return True
-
-        return False
+        if isinstance(value, bool):
+            return value
+        return str(value).lower() == "true"
 
     if data_type == "list":
         if isinstance(value, str):
             value = value.split(",")
-        value = [item.strip() for item in value]
-
-        return value
+        return [item.strip() for item in (value or [])]
 
     return value

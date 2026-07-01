@@ -31,9 +31,7 @@ def runtime_load_balancer_hosts(*, include_imds=False, timeout=2):
 
     if include_imds:
         try:
-            ip = requests.get(
-                "http://169.254.169.254/latest/meta-data/local-ipv4", timeout=timeout
-            ).text.strip()
+            ip = requests.get("http://169.254.169.254/latest/meta-data/local-ipv4", timeout=timeout).text.strip()
         except requests.exceptions.RequestException:
             return []
         return [ip] if ip else []

@@ -1,0 +1,5 @@
+pytest==8.3.4
+ruff==0.11.0
+# required_setting() lazily imports django.core.exceptions; not a runtime dep
+# of the package itself, but needed to exercise/test that code path.
+django==5.1.4
