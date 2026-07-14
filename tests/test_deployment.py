@@ -74,13 +74,15 @@ def test_should_run_migrations(environment, deployment, database_is_ephemeral, e
     )
 
 
-def test_cli_exit_code_reflects_migration_decision(monkeypatch):
+def test_cli_outputs_migration_decision_without_treating_skip_as_failure(monkeypatch, capsys):
     from fchelper.deployment import main
 
     monkeypatch.setenv("ENVIRONMENT", "staging")
     monkeypatch.setenv("DEPLOYMENT", "pr-42")
     monkeypatch.setenv("DATABASE_IS_EPHEMERAL", "true")
     assert main(["should-migrate"]) == 0
+    assert capsys.readouterr().out == "true\n"
 
     monkeypatch.setenv("DATABASE_IS_EPHEMERAL", "false")
-    assert main(["should-migrate"]) == 1
+    assert main(["should-migrate"]) == 0
+    assert capsys.readouterr().out == "false\n"

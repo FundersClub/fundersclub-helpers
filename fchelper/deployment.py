@@ -59,7 +59,7 @@ def main(argv=None):
     if args.command == "should-migrate":
         should_migrate = should_run_migrations()
         print("true" if should_migrate else "false")
-        return 0 if should_migrate else 1
+        return 0
     return 2
 
 
