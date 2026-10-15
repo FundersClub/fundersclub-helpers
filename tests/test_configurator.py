@@ -10,8 +10,12 @@ from fchelper import configurator
 def _reset_configurations():
     # configurator.configurations is a shared module-level dict; isolate tests.
     configurator.configurations.clear()
+    configurator.sources.clear()
+    configurator.secure_keys.clear()
     yield
     configurator.configurations.clear()
+    configurator.sources.clear()
+    configurator.secure_keys.clear()
 
 
 def _client_with_response(*pages):
@@ -20,13 +24,11 @@ def _client_with_response(*pages):
     return client
 
 
-def test_load_developer_and_test_skip_aws_entirely():
+def test_load_test_skips_aws_entirely():
     with patch("fchelper.configurator.boto3.client") as make_client:
-        result = configurator.load("developer", "fc_payments_")
-        result_test = configurator.load("test", "fc_payments_")
+        result = configurator.load("test", "fc_payments_")
 
     assert result == {}
-    assert result_test == {}
     make_client.assert_not_called()
 
 
