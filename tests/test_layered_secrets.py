@@ -1,4 +1,6 @@
+import io
 import os
+import sys
 import types
 from unittest.mock import MagicMock, patch
 
@@ -17,7 +19,7 @@ def _isolate(monkeypatch, tmp_path):
         configurator._loaded_prefix = None
 
     reset()
-    for var in ("FCHELPER_OFFLINE", "FCHELPER_LOCAL_SECRETS", "TESTING", "QUIET"):
+    for var in ("FCHELPER_OFFLINE", "FCHELPER_LOCAL_SECRETS", "TESTING", "QUIET", "NO_COLOR"):
         monkeypatch.delenv(var, raising=False)
     # Never read the real ~/.config/fundersclub from a test.
     monkeypatch.setenv("FCHELPER_POINTERS_FILE", str(tmp_path / "pointers.toml"))
@@ -401,3 +403,35 @@ def test_developer_client_skips_instance_metadata():
     methods = [provider.METHOD for provider in botocore_session.get_component("credential_provider").providers]
     assert "iam-role" not in methods
     assert "sso" in methods and "env" in methods
+
+
+class _Terminal(io.StringIO):
+    def isatty(self):
+        return True
+
+
+def test_warnings_are_bold_red_on_a_terminal(monkeypatch):
+    terminal = _Terminal()
+    monkeypatch.setattr(sys, "stderr", terminal)
+    configurator.check_local_settings(_module(JWT_SECRET="x"))
+
+    lines = terminal.getvalue().splitlines()
+    assert lines
+    assert all(line.startswith("\033[1;31m") and line.endswith("\033[0m") for line in lines)
+
+
+def test_no_color_disables_colour(monkeypatch):
+    monkeypatch.setenv("NO_COLOR", "1")
+    terminal = _Terminal()
+    monkeypatch.setattr(sys, "stderr", terminal)
+    configurator.check_local_settings(_module(JWT_SECRET="x"))
+
+    assert terminal.getvalue()
+    assert "\033[" not in terminal.getvalue()
+
+
+def test_warnings_are_plain_when_not_a_terminal(capsys):
+    configurator.check_local_settings(_module(JWT_SECRET="x"))
+    err = capsys.readouterr().err
+    assert err
+    assert "\033[" not in err

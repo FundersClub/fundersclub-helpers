@@ -91,6 +91,18 @@ def _sanitize(message: str) -> str:
     return message
 
 
+_BOLD_RED = "\033[1;31m"
+_RESET = "\033[0m"
+
+
+def _alert(text: str):
+    """Print a warning to stderr, bold red when stderr is a terminal (NO_COLOR turns that off)."""
+    if not os.getenv("NO_COLOR") and sys.stderr.isatty():
+        # Per line, so the colour survives anything that prefixes or interleaves lines.
+        text = "\n".join(f"{_BOLD_RED}{line}{_RESET}" for line in text.splitlines())
+    print(text, file=sys.stderr)
+
+
 def _note(message: str):
     if not os.getenv("QUIET"):
         print(f"fchelper: {message}")
@@ -310,7 +322,7 @@ def apply_pointers(prefix: str):
         except Exception as e:
             message = f"couldn't resolve {key} -> {pointer} from {path}: {_sanitize(str(e))}"
             # Printed as well as raised: some callers swallow load() errors in development.
-            print(f"fchelper: ✗ {message}", file=sys.stderr)
+            _alert(f"fchelper: ✗ {message}")
             raise SecretPointerError(message, reason=SecretPointerError.UNRESOLVABLE, key=key) from None
 
         configurations[key] = value
@@ -348,7 +360,7 @@ def _print_banner(path: str):
     for entry in entries:
         shadowed = "  (shadowed by an environment variable)" if entry["shadowed_by_env"] else ""
         lines.append(f"fchelper:     {entry['key'].ljust(width)}  <- {entry['source']}{shadowed}")
-    print("\n".join(lines), file=sys.stderr)
+    _alert("\n".join(lines))
 
 
 def check_local_settings(module, *, allow=(), strict=False, baseline=None):
@@ -406,7 +418,7 @@ def check_local_settings(module, *, allow=(), strict=False, baseline=None):
         raise LocalSecretsError(
             f"{message}\n  To run anyway while you migrate: FCHELPER_LOCAL_SECRETS=warn", findings=findings
         )
-    print("\n".join(f"fchelper: ⚠ {line}" for line in message.splitlines()), file=sys.stderr)
+    _alert("\n".join(f"fchelper: ⚠ {line}" for line in message.splitlines()))
     return findings
 
 
