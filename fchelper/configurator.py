@@ -33,6 +33,11 @@ DEVELOPER_ENVIRONMENT = "developer"
 # Anything else has to be spelled out as ssm:/full/path or op://vault/item/field.
 POINTER_TIERS = ("developer", "staging", "production")
 
+# A pointer that drops the developer-tier value so the app's own default applies. For settings production
+# never stores (it relies on the default), so a production block can switch them back.
+DEFAULT_POINTER = "default"
+DEFAULT_SOURCE = "(app default)"
+
 # Patterns that might leak into a botocore error message (e.g. from a
 # misconfigured IAM policy ARN) and shouldn't be printed or re-raised as-is.
 _AWS_ACCESS_KEY_RE = re.compile(r"AKIA[0-9A-Z]{16}")
@@ -268,7 +273,7 @@ def read_pointers(path: str):
     for key, pointer in pointers.items():
         if not _is_pointer(pointer):
             raise SecretPointerError(
-                f"{path}: {key} isn't a pointer. Use one of {', '.join(POINTER_TIERS)}, "
+                f"{path}: {key} isn't a pointer. Use one of {', '.join(POINTER_TIERS + (DEFAULT_POINTER,))}, "
                 "ssm:/full/parameter/path or op://vault/item/field -- never a literal value.",
                 reason=SecretPointerError.NOT_A_POINTER,
                 key=key,
@@ -279,7 +284,12 @@ def read_pointers(path: str):
 def _is_pointer(pointer) -> bool:
     if not isinstance(pointer, str):
         return False
-    return pointer in POINTER_TIERS or pointer.startswith("ssm:/") or pointer.startswith("op://")
+    return (
+        pointer in POINTER_TIERS
+        or pointer == DEFAULT_POINTER
+        or pointer.startswith("ssm:/")
+        or pointer.startswith("op://")
+    )
 
 
 def _read_1password(reference: str) -> str:
@@ -311,6 +321,12 @@ def apply_pointers(prefix: str):
 
     client = None
     for key, pointer in pointers.items():
+        if pointer == DEFAULT_POINTER:
+            configurations.pop(key, None)
+            sources[key] = DEFAULT_SOURCE
+            pointed_keys.add(key)
+            secure_keys.discard(key)
+            continue
         try:
             if pointer.startswith("op://"):
                 value, source, is_secure = _read_1password(pointer), pointer, True

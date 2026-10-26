@@ -168,6 +168,20 @@ def test_developer_tier_pointer_is_not_announced(not_testing, pointers, capsys):
     assert capsys.readouterr().err == ""
 
 
+def test_default_pointer_drops_the_developer_value(not_testing, pointers):
+    pointers('[pointers]\nBASE_URL = "default"\n')
+    client = _client([{"Name": "/fc_developer/BASE_URL", "Type": "String", "Value": "https://sandbox.example"}])
+    with patch("fchelper.configurator._developer_ssm_client", return_value=client):
+        configurator.load("developer", "fc_")
+
+    assert "BASE_URL" not in configurator.configurations
+    assert configurator.setting("BASE_URL", "https://app-default.example") == "https://app-default.example"
+    assert configurator.non_developer_sources() == [
+        {"key": "BASE_URL", "source": configurator.DEFAULT_SOURCE, "shadowed_by_env": False}
+    ]
+    client.get_parameter.assert_not_called()
+
+
 def test_1password_pointer_reads_with_op(not_testing, pointers):
     pointers('[pointers]\nPORTAL_PASSWORD = "op://Private/portal/password"\n')
     completed = MagicMock(returncode=0, stdout="hunter2", stderr="")
